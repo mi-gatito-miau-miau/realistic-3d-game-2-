@@ -1,56 +1,57 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Epic 3D RPG Adventure</title>
+<title>Epic 3D RPG</title>
 <style>
 body { margin:0; overflow:hidden; font-family:monospace; background:black; }
 #hud {
-  position:fixed;
-  top:10px;
-  left:10px;
-  color:white;
-  z-index:10;
+  position:fixed; top:10px; left:10px;
+  color:white; z-index:10;
 }
-#shop {
-  position:fixed;
-  top:50%;
-  left:50%;
-  transform:translate(-50%,-50%);
-  background:#111;
-  border:2px solid #555;
-  padding:15px;
-  display:none;
-  color:white;
+#panel {
+  position:fixed; right:10px; top:10px;
+  background:#111; padding:10px;
+  border:1px solid #444; color:white;
 }
-button { margin:5px; }
+#home {
+  position:fixed; bottom:10px; left:10px;
+  background:#111; padding:10px;
+  border:1px solid #444; color:white;
+}
+button { margin:3px; }
 </style>
 </head>
 <body>
 
 <div id="hud">
-  ❤️ HP: <span id="hp">100</span><br>
-  💰 Gold: <span id="gold">0</span><br>
-  ⚔️ Weapon: <span id="weapon">Sword</span><br>
-  🧟 Stage: <span id="stage">1</span>
+❤️ HP: <span id="hp"></span><br>
+💰 Gold: <span id="gold"></span><br>
+⚔️ Damage: <span id="dmg"></span><br>
+🧟 Stage: <span id="stage"></span><br>
+🏆 Score: <span id="score"></span>
 </div>
 
-<div id="shop">
-  <h3>🏪 Shop</h3>
-  <button onclick="buyWeapon('Axe')">Buy Axe (50g)</button><br>
-  <button onclick="buyWeapon('Spear')">Buy Spear (75g)</button><br>
-  <button onclick="upgradeWeapon()">Upgrade Weapon (30g)</button><br>
-  <button onclick="upgradePlayer()">Upgrade Player (40g)</button><br>
-  <button onclick="closeShop()">Close</button>
+<div id="panel">
+<h4>🏆 Leaderboard</h4>
+<ol id="leaderboard"></ol>
+</div>
+
+<div id="home">
+<h4>🏠 Home Base</h4>
+<button onclick="heal()">Heal</button><br>
+<button onclick="upgrade('damage')">Upgrade Damage</button><br>
+<button onclick="upgrade('speed')">Upgrade Speed</button><br>
+<button onclick="upgrade('hp')">Upgrade HP</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 /* =====================================================
-   BASIC ENGINE
+   CORE ENGINE
 ===================================================== */
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x87aacc, 30, 300);
+scene.fog = new THREE.Fog(0x88aacc, 30, 300);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -68,11 +69,11 @@ scene.add(sun);
 scene.add(new THREE.AmbientLight(0x404040,0.6));
 
 /* =====================================================
-   TERRAIN
+   WORLD
 ===================================================== */
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(600,600,100,100).rotateX(-Math.PI/2),
-  new THREE.MeshStandardMaterial({color:0x3e8e41, roughness:1})
+  new THREE.PlaneGeometry(800,800,50,50).rotateX(-Math.PI/2),
+  new THREE.MeshStandardMaterial({color:0x3e8e41})
 );
 ground.receiveShadow = true;
 scene.add(ground);
@@ -83,11 +84,13 @@ scene.add(ground);
 const player = new THREE.Object3D();
 scene.add(player);
 
-let playerStats = {
+let stats = {
   maxHP: 100,
   hp: 100,
-  speed: 0.14,
-  gold: 0
+  damage: 15,
+  speed: 0.15,
+  gold: 0,
+  score: 0
 };
 
 const body = new THREE.Mesh(
@@ -99,140 +102,127 @@ player.add(body);
 player.position.set(0,2,0);
 
 /* =====================================================
-   WEAPONS
+   VISIBLE WEAPON (FIXED)
 ===================================================== */
-const weapons = {
-  Sword: { damage: 15, range: 2.2, speed: 400 },
-  Axe: { damage: 25, range: 2, speed: 600 },
-  Spear: { damage: 20, range: 3, speed: 500 }
-};
-
-let currentWeapon = "Sword";
-let weaponLevel = 1;
-let canAttack = true;
-
-/* =====================================================
-   SHOP NPC
-===================================================== */
-const shopNPC = new THREE.Mesh(
-  new THREE.BoxGeometry(1,2,1),
-  new THREE.MeshStandardMaterial({color:0xffff00})
+const sword = new THREE.Mesh(
+  new THREE.BoxGeometry(0.1,1.2,0.15),
+  new THREE.MeshStandardMaterial({color:0xdddddd, metalness:0.8})
 );
-shopNPC.position.set(5,1,-5);
-scene.add(shopNPC);
+sword.position.set(0.7,0.6,0);
+player.add(sword);
 
 /* =====================================================
-   ENEMIES & BOSSES
+   ENEMIES & STAGES
 ===================================================== */
 let enemies = [];
 let stage = 1;
 
-function spawnEnemy(boss=false) {
+function spawnWave() {
+  enemies.forEach(e=>scene.remove(e));
+  enemies = [];
+
+  const count = 5 + stage;
+  for(let i=0;i<count;i++) spawnEnemy(false);
+
+  if(stage % 3 === 0) spawnEnemy(true); // boss
+}
+
+function spawnEnemy(boss) {
   const size = boss ? 3 : 1;
-  const hp = boss ? 300 : 40;
   const enemy = new THREE.Mesh(
-    new THREE.BoxGeometry(size, size*1.5, size),
+    new THREE.BoxGeometry(size,size*1.5,size),
     new THREE.MeshStandardMaterial({color: boss ? 0x550000 : 0xaa0000})
   );
   enemy.position.set(
-    (Math.random()-0.5)*100,
+    (Math.random()-0.5)*200,
     size,
-    (Math.random()-0.5)*100
+    (Math.random()-0.5)*200
   );
-  enemy.castShadow = true;
-  enemy.hp = hp;
+  enemy.hp = boss ? 200 : 40;
   enemy.boss = boss;
+  enemy.castShadow = true;
   scene.add(enemy);
   enemies.push(enemy);
 }
-
-function nextStage() {
-  stage++;
-  document.getElementById("stage").textContent = stage;
-  for(let i=0;i<5;i++) spawnEnemy();
-  if(stage % 5 === 0) spawnEnemy(true);
-}
-
-for(let i=0;i<5;i++) spawnEnemy();
 
 /* =====================================================
    INPUT
 ===================================================== */
 const keys = {};
-addEventListener("keydown", e=>{
-  keys[e.key.toLowerCase()] = true;
-  if(e.key === "e") checkShop();
-});
-addEventListener("keyup", e=> keys[e.key.toLowerCase()] = false);
+addEventListener("keydown", e=>keys[e.key.toLowerCase()] = true);
+addEventListener("keyup", e=>keys[e.key.toLowerCase()] = false);
 
 /* =====================================================
-   COMBAT
+   COMBAT (FIXED)
 ===================================================== */
+let canAttack = true;
 addEventListener("click", ()=>{
   if(!canAttack) return;
   canAttack = false;
 
-  const w = weapons[currentWeapon];
+  sword.rotation.x = -1;
+  setTimeout(()=>sword.rotation.x = 0, 120);
+
   enemies.forEach(enemy=>{
     if(!enemy.parent) return;
     const d = player.position.distanceTo(enemy.position);
-    if(d < w.range){
-      enemy.hp -= w.damage * weaponLevel;
+    if(d < 2.5){
+      enemy.hp -= stats.damage;
       if(enemy.hp <= 0){
         scene.remove(enemy);
-        playerStats.gold += enemy.boss ? 100 : 10;
-        if(enemy.boss) nextStage();
+        stats.gold += enemy.boss ? 100 : 10;
+        stats.score += enemy.boss ? 500 : 50;
       }
     }
   });
 
-  setTimeout(()=>canAttack=true, w.speed);
+  setTimeout(()=>canAttack=true,300);
 });
 
 /* =====================================================
-   SHOP LOGIC
+   HOME BASE SYSTEM
 ===================================================== */
-function checkShop(){
-  if(player.position.distanceTo(shopNPC.position) < 3){
-    document.getElementById("shop").style.display = "block";
-  }
+function heal(){
+  stats.hp = stats.maxHP;
 }
-function closeShop(){
-  document.getElementById("shop").style.display = "none";
+function upgrade(type){
+  if(stats.gold < 50) return;
+  stats.gold -= 50;
+  if(type==="damage") stats.damage += 5;
+  if(type==="speed") stats.speed += 0.02;
+  if(type==="hp") stats.maxHP += 20;
 }
-function buyWeapon(name){
-  const cost = name === "Axe" ? 50 : 75;
-  if(playerStats.gold >= cost){
-    currentWeapon = name;
-    playerStats.gold -= cost;
-  }
+
+/* =====================================================
+   LEADERBOARD
+===================================================== */
+function saveScore(){
+  let board = JSON.parse(localStorage.getItem("leaderboard")||"[]");
+  board.push(stats.score);
+  board.sort((a,b)=>b-a);
+  board = board.slice(0,5);
+  localStorage.setItem("leaderboard", JSON.stringify(board));
 }
-function upgradeWeapon(){
-  if(playerStats.gold >= 30){
-    weaponLevel++;
-    playerStats.gold -= 30;
-  }
-}
-function upgradePlayer(){
-  if(playerStats.gold >= 40){
-    playerStats.maxHP += 20;
-    playerStats.hp = playerStats.maxHP;
-    playerStats.speed += 0.02;
-    playerStats.gold -= 40;
-  }
+function loadLeaderboard(){
+  const board = JSON.parse(localStorage.getItem("leaderboard")||"[]");
+  document.getElementById("leaderboard").innerHTML =
+    board.map(s=>`<li>${s}</li>`).join("");
 }
 
 /* =====================================================
    GAME LOOP
 ===================================================== */
 let velY = 0;
+spawnWave();
+loadLeaderboard();
+
 function loop(){
   requestAnimationFrame(loop);
 
-  if(keys.w) player.position.z -= playerStats.speed;
-  if(keys.s) player.position.z += playerStats.speed;
-  if(keys.a) player.position.x -= playerStats.speed;
-  if(keys.d) player.position.x += playerStats.speed;
+  if(keys.w) player.position.z -= stats.speed;
+  if(keys.s) player.position.z += stats.speed;
+  if(keys.a) player.position.x -= stats.speed;
+  if(keys.d) player.position.x += stats.speed;
 
   velY -= 0.02;
   player.position.y += velY;
@@ -243,9 +233,25 @@ function loop(){
     enemy.lookAt(player.position);
     enemy.translateZ(enemy.boss ? 0.02 : 0.03);
     if(enemy.position.distanceTo(player.position) < 1.5){
-      playerStats.hp -= enemy.boss ? 0.5 : 0.1;
+      stats.hp -= enemy.boss ? 0.4 : 0.1;
     }
   });
+
+  // STAGE COMPLETE (FIXED)
+  if(enemies.every(e=>!e.parent)){
+    stage++;
+    stats.score += 200;
+    spawnWave();
+  }
+
+  if(stats.hp <= 0){
+    saveScore();
+    stats.hp = stats.maxHP;
+    stage = 1;
+    stats.score = 0;
+    spawnWave();
+    loadLeaderboard();
+  }
 
   camera.position.lerp(
     new THREE.Vector3(
@@ -256,9 +262,11 @@ function loop(){
   );
   camera.lookAt(player.position);
 
-  document.getElementById("hp").textContent = Math.floor(playerStats.hp);
-  document.getElementById("gold").textContent = playerStats.gold;
-  document.getElementById("weapon").textContent = currentWeapon;
+  document.getElementById("hp").textContent = Math.floor(stats.hp);
+  document.getElementById("gold").textContent = stats.gold;
+  document.getElementById("dmg").textContent = stats.damage;
+  document.getElementById("stage").textContent = stage;
+  document.getElementById("score").textContent = stats.score;
 
   renderer.render(scene,camera);
 }
