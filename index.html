@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Epic 3D RPG Adventure</title>
+<style>
+body { margin:0; overflow:hidden; font-family:monospace; background:black; }
+#hud {
+  position:fixed;
+  top:10px;
+  left:10px;
+  color:white;
+  z-index:10;
+}
+#shop {
+  position:fixed;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%);
+  background:#111;
+  border:2px solid #555;
+  padding:15px;
+  display:none;
+  color:white;
+}
+button { margin:5px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  ❤️ HP: <span id="hp">100</span><br>
+  💰 Gold: <span id="gold">0</span><br>
+  ⚔️ Weapon: <span id="weapon">Sword</span><br>
+  🧟 Stage: <span id="stage">1</span>
+</div>
+
+<div id="shop">
+  <h3>🏪 Shop</h3>
+  <button onclick="buyWeapon('Axe')">Buy Axe (50g)</button><br>
+  <button onclick="buyWeapon('Spear')">Buy Spear (75g)</button><br>
+  <button onclick="upgradeWeapon()">Upgrade Weapon (30g)</button><br>
+  <button onclick="upgradePlayer()">Upgrade Player (40g)</button><br>
+  <button onclick="closeShop()">Close</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* =====================================================
+   BASIC ENGINE
+===================================================== */
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x87aacc, 30, 300);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+/* =====================================================
+   LIGHTING
+===================================================== */
+const sun = new THREE.DirectionalLight(0xffffff,1.2);
+sun.position.set(100,200,100);
+sun.castShadow = true;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x404040,0.6));
+
+/* =====================================================
+   TERRAIN
+===================================================== */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(600,600,100,100).rotateX(-Math.PI/2),
+  new THREE.MeshStandardMaterial({color:0x3e8e41, roughness:1})
+);
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* =====================================================
+   PLAYER
+===================================================== */
+const player = new THREE.Object3D();
+scene.add(player);
+
+let playerStats = {
+  maxHP: 100,
+  hp: 100,
+  speed: 0.14,
+  gold: 0
+};
+
+const body = new THREE.Mesh(
+  new THREE.CapsuleGeometry(0.5,1.2),
+  new THREE.MeshStandardMaterial({color:0x3366ff})
+);
+body.castShadow = true;
+player.add(body);
+player.position.set(0,2,0);
+
+/* =====================================================
+   WEAPONS
+===================================================== */
+const weapons = {
+  Sword: { damage: 15, range: 2.2, speed: 400 },
+  Axe: { damage: 25, range: 2, speed: 600 },
+  Spear: { damage: 20, range: 3, speed: 500 }
+};
+
+let currentWeapon = "Sword";
+let weaponLevel = 1;
+let canAttack = true;
+
+/* =====================================================
+   SHOP NPC
+===================================================== */
+const shopNPC = new THREE.Mesh(
+  new THREE.BoxGeometry(1,2,1),
+  new THREE.MeshStandardMaterial({color:0xffff00})
+);
+shopNPC.position.set(5,1,-5);
+scene.add(shopNPC);
+
+/* =====================================================
+   ENEMIES & BOSSES
+===================================================== */
+let enemies = [];
+let stage = 1;
+
+function spawnEnemy(boss=false) {
+  const size = boss ? 3 : 1;
+  const hp = boss ? 300 : 40;
+  const enemy = new THREE.Mesh(
+    new THREE.BoxGeometry(size, size*1.5, size),
+    new THREE.MeshStandardMaterial({color: boss ? 0x550000 : 0xaa0000})
+  );
+  enemy.position.set(
+    (Math.random()-0.5)*100,
+    size,
+    (Math.random()-0.5)*100
+  );
+  enemy.castShadow = true;
+  enemy.hp = hp;
+  enemy.boss = boss;
+  scene.add(enemy);
+  enemies.push(enemy);
+}
+
+function nextStage() {
+  stage++;
+  document.getElementById("stage").textContent = stage;
+  for(let i=0;i<5;i++) spawnEnemy();
+  if(stage % 5 === 0) spawnEnemy(true);
+}
+
+for(let i=0;i<5;i++) spawnEnemy();
+
+/* =====================================================
+   INPUT
+===================================================== */
+const keys = {};
+addEventListener("keydown", e=>{
+  keys[e.key.toLowerCase()] = true;
+  if(e.key === "e") checkShop();
+});
+addEventListener("keyup", e=> keys[e.key.toLowerCase()] = false);
+
+/* =====================================================
+   COMBAT
+===================================================== */
+addEventListener("click", ()=>{
+  if(!canAttack) return;
+  canAttack = false;
+
+  const w = weapons[currentWeapon];
+  enemies.forEach(enemy=>{
+    if(!enemy.parent) return;
+    const d = player.position.distanceTo(enemy.position);
+    if(d < w.range){
+      enemy.hp -= w.damage * weaponLevel;
+      if(enemy.hp <= 0){
+        scene.remove(enemy);
+        playerStats.gold += enemy.boss ? 100 : 10;
+        if(enemy.boss) nextStage();
+      }
+    }
+  });
+
+  setTimeout(()=>canAttack=true, w.speed);
+});
+
+/* =====================================================
+   SHOP LOGIC
+===================================================== */
+function checkShop(){
+  if(player.position.distanceTo(shopNPC.position) < 3){
+    document.getElementById("shop").style.display = "block";
+  }
+}
+function closeShop(){
+  document.getElementById("shop").style.display = "none";
+}
+function buyWeapon(name){
+  const cost = name === "Axe" ? 50 : 75;
+  if(playerStats.gold >= cost){
+    currentWeapon = name;
+    playerStats.gold -= cost;
+  }
+}
+function upgradeWeapon(){
+  if(playerStats.gold >= 30){
+    weaponLevel++;
+    playerStats.gold -= 30;
+  }
+}
+function upgradePlayer(){
+  if(playerStats.gold >= 40){
+    playerStats.maxHP += 20;
+    playerStats.hp = playerStats.maxHP;
+    playerStats.speed += 0.02;
+    playerStats.gold -= 40;
+  }
+}
+
+/* =====================================================
+   GAME LOOP
+===================================================== */
+let velY = 0;
+function loop(){
+  requestAnimationFrame(loop);
+
+  if(keys.w) player.position.z -= playerStats.speed;
+  if(keys.s) player.position.z += playerStats.speed;
+  if(keys.a) player.position.x -= playerStats.speed;
+  if(keys.d) player.position.x += playerStats.speed;
+
+  velY -= 0.02;
+  player.position.y += velY;
+  if(player.position.y < 2){ player.position.y = 2; velY = 0; }
+
+  enemies.forEach(enemy=>{
+    if(!enemy.parent) return;
+    enemy.lookAt(player.position);
+    enemy.translateZ(enemy.boss ? 0.02 : 0.03);
+    if(enemy.position.distanceTo(player.position) < 1.5){
+      playerStats.hp -= enemy.boss ? 0.5 : 0.1;
+    }
+  });
+
+  camera.position.lerp(
+    new THREE.Vector3(
+      player.position.x,
+      player.position.y + 8,
+      player.position.z + 14
+    ),0.08
+  );
+  camera.lookAt(player.position);
+
+  document.getElementById("hp").textContent = Math.floor(playerStats.hp);
+  document.getElementById("gold").textContent = playerStats.gold;
+  document.getElementById("weapon").textContent = currentWeapon;
+
+  renderer.render(scene,camera);
+}
+loop();
+
+addEventListener("resize", ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
